@@ -15,6 +15,7 @@ let package = Package(
             name: "DiffDylibCore",
             linkerSettings: [
                 .linkedFramework("Security"),
+                .linkedLibrary("sqlite3"),
             ]
         ),
         .executableTarget(

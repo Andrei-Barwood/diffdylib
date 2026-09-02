@@ -2,8 +2,8 @@ import Foundation
 import DiffDylibCore
 
 /// DiffDylib CLI.
-/// `enumerate` walks Mach-O load commands. `capture` / `compare` / `show`
-/// remain stubs. No libproc, no Endpoint Security.
+/// `enumerate` and `capture` / `show` are implemented. `compare` is still a stub.
+/// No libproc, no Endpoint Security.
 
 enum CLIExit {
     static let failure = 1
@@ -29,6 +29,9 @@ struct DiffDylibCLI {
         } catch let error as StaticEnumerationError {
             fputs("error: \(error.description)\n", stderr)
             Foundation.exit(Int32(CLIExit.failure))
+        } catch let error as BaselineStoreError {
+            fputs("error: \(error.description)\n", stderr)
+            Foundation.exit(Int32(CLIExit.failure))
         } catch {
             fputs("error: \(error)\n", stderr)
             Foundation.exit(Int32(CLIExit.failure))
@@ -47,14 +50,16 @@ struct DiffDylibCLI {
             guard let options else { return }
             try runEnumerate(options)
         case "capture":
-            guard try parseCapture(Array(arguments.dropFirst())) else { return }
-            notImplemented("capture")
+            let options = try parseCapture(Array(arguments.dropFirst()))
+            guard let options else { return }
+            try runCapture(options)
         case "compare":
             guard try parseCompare(Array(arguments.dropFirst())) else { return }
             notImplemented("compare")
         case "show":
-            guard try parseShow(Array(arguments.dropFirst())) else { return }
-            notImplemented("show")
+            let options = try parseShow(Array(arguments.dropFirst()))
+            guard let options else { return }
+            try runShow(options)
         case "-h", "--help", "help":
             printUsage()
         default:
@@ -135,10 +140,23 @@ struct DiffDylibCLI {
         }
     }
 
-    /// Returns `false` when help was printed and the process should exit 0.
-    private static func parseCapture(_ args: [String]) throws -> Bool {
+    private struct CaptureOptions {
+        var app: String
+        var out: String
+        var store: String?
+        var replace: Bool
+        var depth: Int
+        var skipSystem: Bool
+    }
+
+    /// Returns `nil` when help was printed.
+    private static func parseCapture(_ args: [String]) throws -> CaptureOptions? {
         var app: String?
         var out: String?
+        var store: String?
+        var replace = false
+        var depth = 1
+        var skipSystem = true
         var i = 0
         while i < args.count {
             switch args[i] {
@@ -146,9 +164,30 @@ struct DiffDylibCLI {
                 app = try requireValue("--app", args: args, index: &i)
             case "--out":
                 out = try requireValue("--out", args: args, index: &i)
+            case "--store":
+                if i + 1 < args.count, !args[i + 1].hasPrefix("-") {
+                    store = try requireValue("--store", args: args, index: &i)
+                } else {
+                    store = BaselineCapture.defaultStorePath
+                }
+            case "--replace":
+                replace = true
+            case "--depth":
+                let raw = try requireValue("--depth", args: args, index: &i)
+                guard let value = Int(raw), value >= 1, value <= StaticEnumerator.maxDepth else {
+                    throw CLIError(
+                        message: "--depth must be an integer 1...\(StaticEnumerator.maxDepth)",
+                        exitCode: CLIExit.usage
+                    )
+                }
+                depth = value
+            case "--skip-system":
+                skipSystem = true
+            case "--no-skip-system":
+                skipSystem = false
             case "-h", "--help":
                 printCaptureUsage()
-                return false
+                return nil
             default:
                 throw CLIError(
                     message: "unknown option '\(args[i])' for capture",
@@ -157,14 +196,48 @@ struct DiffDylibCLI {
             }
             i += 1
         }
-        guard app != nil, out != nil else {
+        guard let app, let out else {
             printCaptureUsage()
             throw CLIError(
                 message: "capture requires --app <path> and --out <file>",
                 exitCode: CLIExit.usage
             )
         }
-        return true
+        return CaptureOptions(
+            app: app,
+            out: out,
+            store: store,
+            replace: replace,
+            depth: depth,
+            skipSystem: skipSystem
+        )
+    }
+
+    private static func runCapture(_ options: CaptureOptions) throws {
+        let storeURL = options.store.map {
+            URL(fileURLWithPath: BaselineCapture.expandPath($0))
+        }
+        let result = try BaselineCapture.capture(
+            appURL: URL(fileURLWithPath: options.app),
+            outURL: URL(fileURLWithPath: BaselineCapture.expandPath(options.out)),
+            storeURL: storeURL,
+            replace: options.replace,
+            depth: options.depth,
+            skipSystem: options.skipSystem
+        )
+        var summary = "captured revision \(result.baseline.revision) → \(result.jsonURL.path)"
+        if result.replaced {
+            summary += " (replaced)"
+        }
+        if let store = result.storeURL {
+            summary += "\nstore \(store.path)"
+        }
+        fputs(summary + "\n", stderr)
+        let data = try DiffDylibJSON.encode(result.baseline)
+        FileHandle.standardOutput.write(data)
+        if data.last != UInt8(ascii: "\n") {
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
     }
 
     /// Returns `false` when help was printed and the process should exit 0.
@@ -199,17 +272,25 @@ struct DiffDylibCLI {
         return true
     }
 
-    /// Returns `false` when help was printed and the process should exit 0.
-    private static func parseShow(_ args: [String]) throws -> Bool {
+    private struct ShowOptions {
+        var baseline: String
+        var jsonOnly: Bool
+    }
+
+    /// Returns `nil` when help was printed.
+    private static func parseShow(_ args: [String]) throws -> ShowOptions? {
         var baseline: String?
+        var jsonOnly = false
         var i = 0
         while i < args.count {
             switch args[i] {
             case "--baseline":
                 baseline = try requireValue("--baseline", args: args, index: &i)
+            case "--json":
+                jsonOnly = true
             case "-h", "--help":
                 printShowUsage()
-                return false
+                return nil
             default:
                 throw CLIError(
                     message: "unknown option '\(args[i])' for show",
@@ -218,14 +299,33 @@ struct DiffDylibCLI {
             }
             i += 1
         }
-        guard baseline != nil else {
+        guard let baseline else {
             printShowUsage()
             throw CLIError(
                 message: "show requires --baseline <file>",
                 exitCode: CLIExit.usage
             )
         }
-        return true
+        return ShowOptions(baseline: baseline, jsonOnly: jsonOnly)
+    }
+
+    private static func runShow(_ options: ShowOptions) throws {
+        let url = URL(fileURLWithPath: BaselineCapture.expandPath(options.baseline))
+        let baseline = try BaselineCapture.loadJSON(from: url)
+        let json = try DiffDylibJSON.encode(baseline)
+        if options.jsonOnly {
+            FileHandle.standardOutput.write(json)
+            if json.last != UInt8(ascii: "\n") {
+                FileHandle.standardOutput.write(Data("\n".utf8))
+            }
+            return
+        }
+        fputs(BaselineFormatter.human(baseline), stdout)
+        fputs("--- json ---\n", stdout)
+        FileHandle.standardOutput.write(json)
+        if json.last != UInt8(ascii: "\n") {
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
     }
 
     private static func requireValue(
@@ -247,12 +347,15 @@ struct DiffDylibCLI {
 
         Usage:
           diffdylib enumerate --app <path> [--depth 1] [--skip-system|--no-skip-system]
-          diffdylib capture --app <path> --out <file>
+          diffdylib capture --app <path> --out <file> [--store [file]] [--replace]
+                           [--depth 1] [--skip-system|--no-skip-system]
           diffdylib compare --baseline <file> --app <path>
-          diffdylib show --baseline <file>
+          diffdylib show --baseline <file> [--json]
 
         enumerate walks LC_LOAD_DYLIB / LC_RPATH (static only).
-        capture / compare / show are not implemented yet.
+        capture writes baseline.v1 JSON and optional SQLite revisions.
+        show prints a human dump and JSON.
+        compare is not implemented yet.
         No libproc. No Endpoint Security.
 
         """
@@ -267,7 +370,15 @@ struct DiffDylibCLI {
     }
 
     private static func printCaptureUsage() {
-        fputs("usage: diffdylib capture --app <path> --out <file>\n", stdout)
+        fputs(
+            """
+            usage: diffdylib capture --app <path> --out <file> [--store [file]] [--replace]
+                                 [--depth 1] [--skip-system|--no-skip-system]
+            default --store path: \(BaselineCapture.defaultStorePath)
+
+            """,
+            stdout
+        )
     }
 
     private static func printCompareUsage() {
@@ -275,6 +386,6 @@ struct DiffDylibCLI {
     }
 
     private static func printShowUsage() {
-        fputs("usage: diffdylib show --baseline <file>\n", stdout)
+        fputs("usage: diffdylib show --baseline <file> [--json]\n", stdout)
     }
 }

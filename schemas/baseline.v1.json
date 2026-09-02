@@ -36,6 +36,16 @@
       "type": ["string", "null"],
       "description": "Host Team ID (nameplate). Never treated as a malware label."
     },
+    "binary_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "description": "SHA-256 of the main Mach-O. Natural-key field content_hash_of_main_binary."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Store revision for the natural key (process_signing_id, app_path, binary hash)."
+    },
     "captured_at": {
       "type": "string",
       "format": "date-time",

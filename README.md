@@ -44,7 +44,7 @@ Patrick Wardle, *Detecting (Evil) Dylibs* (Objective-See, agosto 2026) y DEF CON
 
 Las APIs de seguridad de macOS (Network Extension, Endpoint Security, firewalls como LuLu) atribuyen eventos al **proceso**, no a la dylib que inició la acción. DiffDylib aumenta la granularidad de la instrumentación; no reescribe el kernel.
 
-## Estado (01.3)
+## Estado (01.4)
 
 Implementado:
 
@@ -67,9 +67,14 @@ Implementado:
   - `writableByUser`: el uid efectivo puede escribir el archivo **o** su directorio padre (`access(W_OK)`)
   - `sip`: `protected` | `unprotected` | `unknown` aproximado con `st_flags` (`UF_RESTRICTED` / `SF_RESTRICTED`). Sin API privada de rootless. Los stubs del dyld shared cache pueden no llevar el flag aunque el sistema esté protegido por SIP.
 
+- `diffdylib capture`: enumeración estática + JSON `baseline.v1`.
+- SQLite opcional (`--store ~/.diffdylib/baselines.sqlite`).
+- Clave natural: `(process_signing_id, app_path, content_hash_of_main_binary)`.
+- Misma clave → nueva **revisión**. `--replace` sobreescribe la revisión más reciente.
+- `diffdylib show --baseline <file>`: volcado humano y JSON (`--json` solo JSON).
+
 No implementado (a propósito):
 
-- Persistencia SQLite / `capture` de verdad.
 - Comparador diferencial (`compare`).
 - Enumeración runtime (`proc_pidinfo`).
 - Endpoint Security.
@@ -80,12 +85,15 @@ No implementado (a propósito):
 
 ```text
 diffdylib enumerate --app <path> [--depth 1] [--skip-system|--no-skip-system]
-diffdylib capture --app <path> --out <file>
+diffdylib capture --app <path> --out <file> [--store [file]] [--replace]
+                 [--depth 1] [--skip-system|--no-skip-system]
+diffdylib show --baseline <file> [--json]
 diffdylib compare --baseline <file> --app <path>
-diffdylib show --baseline <file>
 ```
 
-`enumerate` imprime JSON (`dyld87.static-enum.v1`) con `dylibs` y `findings`. `capture` / `compare` / `show` siguen saliendo 2 (`not implemented`).
+`enumerate` imprime JSON (`dyld87.static-enum.v1`). `capture` escribe el baseline y, si hay `--store`, una fila SQLite. `show` imprime texto humano y JSON. `compare` sigue saliendo 2 (`not implemented`).
+
+`--store` sin ruta usa `~/.diffdylib/baselines.sqlite`.
 
 ```sh
 make fixtures
@@ -105,15 +113,15 @@ Los documentos usan snake_case y fechas RFC 3339 con fracción, alineados al con
 - Baseline: `"schema": "dyld87.baseline.v1"`
 - Informe: `"schema": "dyld87.diff-report.v1"`
 
-SQLite queda reservado para un prompt posterior. No hay protobuf.
+SQLite es opcional y solo guarda revisiones de baselines. No hay protobuf.
 
 ## SIP (`unknown` a propósito)
 
 No hay API pública de “¿este path está cubierto por SIP?”. DiffDylib no llama interfaces privadas. Si `lstat` funciona y el bit restricted no está, el valor es `unprotected` aunque el path viva bajo `/usr/lib`. Eso es una limitación documentada, no un bug a “resolver con magia”.
 
-## Siguiente prompt (01.4)
+## Siguiente prompt (01.5)
 
-Baseline store: `diffdylib capture` persiste JSON (`baseline.v1`) y SQLite opcional. `show` imprime el baseline. Sin `compare` todavía.
+Comparador diferencial: estado esperado vs estado real (por ahora otra enumeración estática). Findings `added` / `removed` / `hashChanged` / `teamChanged` / `writableUnexpected`. CLI `compare`. Sin Endpoint Security.
 
 ## Licencia
 

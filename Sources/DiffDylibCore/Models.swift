@@ -204,10 +204,15 @@ public struct AppBaseline: Codable, Equatable, Sendable {
     public var id: String
     /// Path of the host application or main executable.
     public var appPath: String
-    /// Host signing identifier, if known.
+    /// Host signing identifier, if known. Natural-key field `process_signing_id`.
     public var signingID: String?
     /// Host Team ID, if known.
     public var teamID: String?
+    /// SHA-256 of the main Mach-O. Natural-key field `content_hash_of_main_binary`.
+    public var binarySHA256: String?
+    /// Store revision for the natural key. JSON exports of a single capture are `1`
+    /// unless the SQLite store assigned a higher number.
+    public var revision: Int
     /// When this baseline was captured.
     public var capturedAt: Date
     /// Dylibs that constitute the expected connected load.
@@ -221,6 +226,8 @@ public struct AppBaseline: Codable, Equatable, Sendable {
         appPath: String,
         signingID: String? = nil,
         teamID: String? = nil,
+        binarySHA256: String? = nil,
+        revision: Int = 1,
         capturedAt: Date = Date(),
         dylibs: [DylibIdentity] = [],
         notes: [String] = []
@@ -230,9 +237,21 @@ public struct AppBaseline: Codable, Equatable, Sendable {
         self.appPath = appPath
         self.signingID = signingID
         self.teamID = teamID
+        self.binarySHA256 = binarySHA256
+        self.revision = revision
         self.capturedAt = capturedAt
         self.dylibs = dylibs
         self.notes = notes
+    }
+
+    /// `(process_signing_id, app_path, content_hash_of_main_binary)`.
+    /// Unsigned hosts use an empty signing id in the key, not a wildcard.
+    public var naturalKey: BaselineKey {
+        BaselineKey(
+            signingID: signingID ?? "",
+            appPath: appPath,
+            binarySHA256: binarySHA256 ?? ""
+        )
     }
 
     enum CodingKeys: String, CodingKey {
@@ -241,9 +260,52 @@ public struct AppBaseline: Codable, Equatable, Sendable {
         case appPath = "app_path"
         case signingID = "signing_id"
         case teamID = "team_id"
+        case binarySHA256 = "binary_sha256"
+        case revision
         case capturedAt = "captured_at"
         case dylibs
         case notes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try container.decode(String.self, forKey: .schema)
+        id = try container.decode(String.self, forKey: .id)
+        appPath = try container.decode(String.self, forKey: .appPath)
+        signingID = try container.decodeIfPresent(String.self, forKey: .signingID)
+        teamID = try container.decodeIfPresent(String.self, forKey: .teamID)
+        binarySHA256 = try container.decodeIfPresent(String.self, forKey: .binarySHA256)
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        capturedAt = try container.decode(Date.self, forKey: .capturedAt)
+        dylibs = try container.decode([DylibIdentity].self, forKey: .dylibs)
+        notes = try container.decodeIfPresent([String].self, forKey: .notes) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schema, forKey: .schema)
+        try container.encode(id, forKey: .id)
+        try container.encode(appPath, forKey: .appPath)
+        try container.encodeIfPresent(signingID, forKey: .signingID)
+        try container.encodeIfPresent(teamID, forKey: .teamID)
+        try container.encodeIfPresent(binarySHA256, forKey: .binarySHA256)
+        try container.encode(revision, forKey: .revision)
+        try container.encode(capturedAt, forKey: .capturedAt)
+        try container.encode(dylibs, forKey: .dylibs)
+        try container.encode(notes, forKey: .notes)
+    }
+}
+
+/// Natural key for a captured application state.
+public struct BaselineKey: Hashable, Sendable {
+    public var signingID: String
+    public var appPath: String
+    public var binarySHA256: String
+
+    public init(signingID: String, appPath: String, binarySHA256: String) {
+        self.signingID = signingID
+        self.appPath = appPath
+        self.binarySHA256 = binarySHA256
     }
 }
 
