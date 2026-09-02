@@ -118,6 +118,29 @@ final class DifferentialComparatorTests: XCTestCase {
         XCTAssertFalse(report.summary.hasMediumOrHigh)
     }
 
+    func testMarkdownReportContainsDeltaTable() throws {
+        let source = FixtureSupport.file("rpath")
+        let copy = scratch.appendingPathComponent("rpath-md")
+        try FileManager.default.copyItem(at: source, to: copy)
+        let host = copy.appendingPathComponent("host")
+        try FileManager.default.removeItem(at: copy.appendingPathComponent("r1/libcollide.dylib"))
+        let baseline = try BaselineCapture.make(appURL: host)
+        try FileManager.default.copyItem(
+            at: copy.appendingPathComponent("r2/libcollide.dylib"),
+            to: copy.appendingPathComponent("r1/libcollide.dylib")
+        )
+        let report = try DifferentialComparator.compare(baseline: baseline, appURL: host)
+        let md = DiffReportFormatter.markdown(report)
+        XCTAssertTrue(md.contains("| expected | observed | Δ added | Δ removed |"))
+        XCTAssertTrue(md.contains("`added`") || md.contains("| `added` |"))
+        XCTAssertTrue(report.summary.added >= 1)
+
+        let prefix = scratch.appendingPathComponent("report")
+        try DiffReportFormatter.write(report, to: prefix)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: prefix.appendingPathExtension("json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: prefix.appendingPathExtension("md").path))
+    }
+
     func testWritableUnexpectedPlusTeamChangedIsHigh() {
         let expected = DylibIdentity(
             path: "@rpath/libx.dylib",

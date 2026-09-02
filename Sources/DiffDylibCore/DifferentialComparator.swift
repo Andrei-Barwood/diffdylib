@@ -329,14 +329,17 @@ public enum DifferentialComparator {
     }
 
     public static func formatHuman(_ report: DiffReport) -> String {
+        let s = report.summary
         var lines: [String] = []
         lines.append("DiffDylib compare (\(report.schema))")
         lines.append("  app:         \(report.app.path)")
         lines.append("  baseline_id: \(report.baselineId)")
-        lines.append("  expected:    \(report.summary.expectedCount)")
-        lines.append("  observed:    \(report.summary.observedCount)")
+        lines.append("  expected:    \(s.expectedCount)")
+        lines.append("  observed:    \(s.observedCount)")
+        lines.append("  Δ added:     \(s.added)")
+        lines.append("  Δ removed:   \(s.removed)")
         lines.append("  findings:    \(report.findings.count)")
-        lines.append("  highest:     \(report.summary.highestScoreHint?.rawValue ?? "none")")
+        lines.append("  highest:     \(s.highestScoreHint?.rawValue ?? "none")")
         for finding in report.findings {
             let name = finding.observed?.path ?? finding.expected?.path ?? "(unknown)"
             lines.append("    [\(finding.scoreHint.rawValue)] \(finding.kind.rawValue)  \(name)")

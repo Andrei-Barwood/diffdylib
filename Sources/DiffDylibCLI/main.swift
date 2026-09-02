@@ -248,6 +248,8 @@ struct DiffDylibCLI {
         var app: String?
         var pid: pid_t?
         var jsonOnly: Bool
+        var markdown: Bool
+        var out: String?
         var depth: Int
         var skipSystem: Bool
     }
@@ -258,6 +260,8 @@ struct DiffDylibCLI {
         var app: String?
         var pid: pid_t?
         var jsonOnly = false
+        var markdown = false
+        var out: String?
         var depth = 1
         var skipSystem = true
         var i = 0
@@ -275,6 +279,10 @@ struct DiffDylibCLI {
                 pid = value
             case "--json":
                 jsonOnly = true
+            case "--md", "--markdown":
+                markdown = true
+            case "--out":
+                out = try requireValue("--out", args: args, index: &i)
             case "--depth":
                 let raw = try requireValue("--depth", args: args, index: &i)
                 guard let value = Int(raw), value >= 1, value <= StaticEnumerator.maxDepth else {
@@ -318,6 +326,8 @@ struct DiffDylibCLI {
             app: app,
             pid: pid,
             jsonOnly: jsonOnly,
+            markdown: markdown,
+            out: out,
             depth: depth,
             skipSystem: skipSystem
         )
@@ -347,14 +357,27 @@ struct DiffDylibCLI {
                 exitCode: CLIExit.usage
             )
         }
+        if let out = options.out {
+            try DiffReportFormatter.write(
+                report,
+                to: URL(fileURLWithPath: BaselineCapture.expandPath(out))
+            )
+        }
         let json = try DiffDylibJSON.encode(report)
-        if !options.jsonOnly {
+        if options.markdown {
+            fputs(DiffReportFormatter.markdown(report), stdout)
+        } else if !options.jsonOnly {
             fputs(DifferentialComparator.formatHuman(report), stdout)
             fputs("--- json ---\n", stdout)
-        }
-        FileHandle.standardOutput.write(json)
-        if json.last != UInt8(ascii: "\n") {
-            FileHandle.standardOutput.write(Data("\n".utf8))
+            FileHandle.standardOutput.write(json)
+            if json.last != UInt8(ascii: "\n") {
+                FileHandle.standardOutput.write(Data("\n".utf8))
+            }
+        } else {
+            FileHandle.standardOutput.write(json)
+            if json.last != UInt8(ascii: "\n") {
+                FileHandle.standardOutput.write(Data("\n".utf8))
+            }
         }
         if report.summary.hasMediumOrHigh {
             Foundation.exit(1)
@@ -438,10 +461,10 @@ struct DiffDylibCLI {
           diffdylib enumerate --app <path> [--depth 1] [--skip-system|--no-skip-system]
           diffdylib capture --app <path> --out <file> [--store [file]] [--replace]
                            [--depth 1] [--skip-system|--no-skip-system]
-          diffdylib compare --baseline <file> --app <path> [--json]
-                           [--depth 1] [--skip-system|--no-skip-system]
-          diffdylib compare --baseline <file> --pid <pid> [--json]
-                           [--skip-system|--no-skip-system]
+          diffdylib compare --baseline <file> --app <path> [--json|--markdown]
+                           [--out <report>] [--depth 1] [--skip-system|--no-skip-system]
+          diffdylib compare --baseline <file> --pid <pid> [--json|--markdown]
+                           [--out <report>] [--skip-system|--no-skip-system]
           diffdylib show --baseline <file> [--json]
           diffdylib ps --pid <pid> [--json]
 
@@ -478,10 +501,11 @@ struct DiffDylibCLI {
     private static func printCompareUsage() {
         fputs(
             """
-            usage: diffdylib compare --baseline <file> --app <path> [--json]
-                                 [--depth 1] [--skip-system|--no-skip-system]
-                   diffdylib compare --baseline <file> --pid <pid> [--json]
-                                 [--skip-system|--no-skip-system]
+            usage: diffdylib compare --baseline <file> --app <path> [--json|--markdown]
+                                 [--out <report>] [--depth 1] [--skip-system|--no-skip-system]
+                   diffdylib compare --baseline <file> --pid <pid> [--json|--markdown]
+                                 [--out <report>] [--skip-system|--no-skip-system]
+            --out writes <report>.json and <report>.md
             exit 0 = no medium/high findings; 1 = medium/high; 2 = usage
 
             """,
