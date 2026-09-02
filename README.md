@@ -44,7 +44,7 @@ Patrick Wardle, *Detecting (Evil) Dylibs* (Objective-See, agosto 2026) y DEF CON
 
 Las APIs de seguridad de macOS (Network Extension, Endpoint Security, firewalls como LuLu) atribuyen eventos al **proceso**, no a la dylib que inició la acción. DiffDylib aumenta la granularidad de la instrumentación; no reescribe el kernel.
 
-## Estado (01.4)
+## Estado (01.6)
 
 Implementado:
 
@@ -80,10 +80,12 @@ Implementado:
   - exit 0 = sin medium/high
   - exit 1 = medium/high
   - exit 2 = error de uso
+- Runtime: `RuntimeEnumerator.listExecutableMappings(pid:)` via `proc_pidinfo` + `PROC_PIDREGIONPATHINFO` (solo `VM_PROT_EXECUTE` con path). **No** `task_for_pid`, **no** lectura de memoria ajena.
+- `diffdylib ps --pid <pid>` y `compare --pid <pid>`.
+- Δ runtime = mappings − baseline estático. Mismo basename, distinto path → `pathChanged` (dos `libtbb.12.6.dylib`).
 
 No implementado (a propósito):
 
-- Enumeración runtime (`proc_pidinfo`).
 - Endpoint Security.
 
 `unsigned` no es malware. `writableByUser` no es compromiso.
@@ -97,9 +99,11 @@ diffdylib capture --app <path> --out <file> [--store [file]] [--replace]
 diffdylib show --baseline <file> [--json]
 diffdylib compare --baseline <file> --app <path> [--json]
                  [--depth 1] [--skip-system|--no-skip-system]
+diffdylib compare --baseline <file> --pid <pid> [--json]
+diffdylib ps --pid <pid> [--json]
 ```
 
-`enumerate` imprime JSON (`dyld87.static-enum.v1`). `capture` escribe el baseline. `compare` contrasta esperado vs observado (estático). `show` imprime texto humano y JSON.
+`enumerate` imprime JSON (`dyld87.static-enum.v1`). `capture` escribe el baseline. `compare --app` usa otra pasada estática; `compare --pid` usa mappings runtime. `ps` lista mappings ejecutables con path. `show` imprime texto humano y JSON.
 
 `writableUnexpected` se dispara si hay `added` o `hashChanged`, el archivo es escribible por el usuario, y la ruta cae en `~/Library`, `/tmp` (`/private/tmp`), `/var/tmp`, `/Users`, o el directorio del propio host.
 
@@ -129,9 +133,15 @@ SQLite es opcional y solo guarda revisiones de baselines. No hay protobuf.
 
 No hay API pública de “¿este path está cubierto por SIP?”. DiffDylib no llama interfaces privadas. Si `lstat` funciona y el bit restricted no está, el valor es `unprotected` aunque el path viva bajo `/usr/lib`. Eso es una limitación documentada, no un bug a “resolver con magia”.
 
-## Siguiente prompt (01.6)
+## Límites del runtime (`proc_pidinfo`)
 
-Estado real runtime con `proc_pidinfo` + `PROC_PIDREGIONPATHINFO`. `compare --pid`. Detectar dos `libtbb` (hijacker vs Adobe). Sin `task_for_pid`. Documentar dyld shared cache y TOCTOU disco vs memoria.
+- **dyld shared cache:** las dylibs de plataforma suelen no aparecer como mappings con path propio. `ps` no es un inventario completo de `libSystem`.
+- **TOCTOU disco vs memoria:** el SHA-256 y la firma se leen del archivo *actual* en esa ruta. Si el fichero se sustituyó después del `mmap`, el nameplate no describe las páginas residentes.
+- No se usa `task_for_pid` ni `mach_vm_read`. Si hace falta ver JIT / mappings anónimos, eso es otro producto (y otro prompt).
+
+## Siguiente prompt (01.7)
+
+Reporte Markdown + JSON, `make demo` (captura, planta dylib extra en el fixture, compara), sección de falsos positivos (plugins, JIT). Sin Endpoint Security ni unifilares.
 
 ## Licencia
 

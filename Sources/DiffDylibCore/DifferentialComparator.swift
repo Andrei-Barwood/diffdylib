@@ -22,6 +22,168 @@ public enum DifferentialComparator {
         )
     }
 
+    /// Δ = runtime executable mappings − baseline static set.
+    /// Also flags mappings that share a basename but not a path (two `libtbb`).
+    public static func compare(
+        baseline: AppBaseline,
+        pid: pid_t,
+        skipSystem: Bool = true
+    ) throws -> DiffReport {
+        let mappings = try RuntimeEnumerator.listExecutableMappings(pid: pid)
+        let executable = try RuntimeEnumerator.processPath(pid: pid)
+        return compareRuntime(
+            baseline: baseline,
+            mappings: mappings,
+            executableURL: executable,
+            skipSystem: skipSystem
+        )
+    }
+
+    public static func compareRuntime(
+        baseline: AppBaseline,
+        mappings: [DylibIdentity],
+        executableURL: URL,
+        skipSystem: Bool = true
+    ) -> DiffReport {
+        let bundleDirectory = executableURL.deletingLastPathComponent().path
+        let hostPath = executableURL.standardizedFileURL.path
+        let runtime = mappings.filter { dylib in
+            let path = dylib.resolvedPath ?? dylib.path
+            if URL(fileURLWithPath: path).standardizedFileURL.path == hostPath {
+                return false
+            }
+            if skipSystem, systemOwned(dylib) {
+                return false
+            }
+            return true
+        }
+
+        var expectedByResolved: [String: DylibIdentity] = [:]
+        var expectedByBasename: [String: [DylibIdentity]] = [:]
+        for dylib in baseline.dylibs {
+            if skipSystem, systemOwned(dylib) { continue }
+            if let resolved = standardized(dylib.resolvedPath) {
+                expectedByResolved[resolved] = dylib
+                expectedByBasename[basename(resolved), default: []].append(dylib)
+            } else {
+                expectedByBasename[basename(dylib.path), default: []].append(dylib)
+            }
+        }
+
+        var findings: [DiffFinding] = []
+        var addedKeys: Set<String> = []
+        var hashChangedKeys: Set<String> = []
+        var teamChangedKeys: Set<String> = []
+        var seenRuntime = Set<String>()
+
+        for observed in runtime {
+            guard let path = standardized(observed.resolvedPath ?? observed.path) else { continue }
+            guard seenRuntime.insert(path).inserted else { continue }
+            let name = basename(path)
+
+            if let expected = expectedByResolved[path] {
+                if hashDiffers(expected.sha256, observed.sha256) {
+                    hashChangedKeys.insert(path)
+                    findings.append(
+                        DiffFinding(
+                            kind: .hashChanged,
+                            expected: expected,
+                            observed: observed,
+                            scoreHint: .medium
+                        )
+                    )
+                }
+                if expected.teamID != observed.teamID {
+                    teamChangedKeys.insert(path)
+                    findings.append(
+                        DiffFinding(
+                            kind: .teamChanged,
+                            expected: expected,
+                            observed: observed,
+                            scoreHint: .medium
+                        )
+                    )
+                }
+                continue
+            }
+
+            addedKeys.insert(path)
+            let score: ScoreHint = systemOwned(observed) ? .low : .medium
+            findings.append(DiffFinding(kind: .added, observed: observed, scoreHint: score))
+
+            let collisions = (expectedByBasename[name] ?? []).filter { candidate in
+                standardized(candidate.resolvedPath) != path
+            }
+            if let other = collisions.first {
+                findings.append(
+                    DiffFinding(
+                        kind: .pathChanged,
+                        expected: other,
+                        observed: observed,
+                        scoreHint: .medium
+                    )
+                )
+            }
+        }
+
+        let runtimeResolved = seenRuntime
+        for dylib in baseline.dylibs {
+            if skipSystem, systemOwned(dylib) { continue }
+            guard let path = standardized(dylib.resolvedPath) else { continue }
+            if !runtimeResolved.contains(path) {
+                findings.append(
+                    DiffFinding(kind: .removed, expected: dylib, scoreHint: .info)
+                )
+            }
+        }
+
+        for key in addedKeys.union(hashChangedKeys).sorted() {
+            guard let observed = runtime.first(where: {
+                standardized($0.resolvedPath ?? $0.path) == key
+            }) else { continue }
+            guard observed.writableByUser else { continue }
+            let location = observed.resolvedPath ?? observed.path
+            guard isSensitiveLocation(location, bundleDirectory: bundleDirectory) else {
+                continue
+            }
+            let score: ScoreHint = teamChangedKeys.contains(key) ? .high : .medium
+            findings.append(
+                DiffFinding(
+                    kind: .writableUnexpected,
+                    expected: expectedByResolved[key],
+                    observed: observed,
+                    scoreHint: score
+                )
+            )
+        }
+
+        let summary = summarize(
+            expectedCount: baseline.dylibs.count,
+            observedCount: runtime.count,
+            findings: findings
+        )
+        let host = FileIdentityInspector.inspect(url: executableURL)
+        return DiffReport(
+            app: AppRef(
+                path: executableURL.path,
+                signingID: host.signingID ?? baseline.signingID,
+                teamID: host.teamID ?? baseline.teamID
+            ),
+            baselineId: baseline.id,
+            findings: findings,
+            summary: summary
+        )
+    }
+
+    private static func standardized(_ path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    private static func basename(_ path: String) -> String {
+        URL(fileURLWithPath: path).lastPathComponent
+    }
+
     public static func compare(
         baseline: AppBaseline,
         observed: StaticEnumerationResult,

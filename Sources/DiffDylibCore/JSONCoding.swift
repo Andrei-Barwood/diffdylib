@@ -5,6 +5,7 @@ public enum DiffDylibSchema {
     public static let baselineV1 = "dyld87.baseline.v1"
     public static let diffReportV1 = "dyld87.diff-report.v1"
     public static let staticEnumV1 = "dyld87.static-enum.v1"
+    public static let runtimePsV1 = "dyld87.runtime-ps.v1"
 }
 
 /// Shared JSON coding for baselines and reports.

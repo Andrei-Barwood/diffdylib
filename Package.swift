@@ -12,7 +12,12 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "DiffDylibProc",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "DiffDylibCore",
+            dependencies: ["DiffDylibProc"],
             linkerSettings: [
                 .linkedFramework("Security"),
                 .linkedLibrary("sqlite3"),

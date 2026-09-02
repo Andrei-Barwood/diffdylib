@@ -35,6 +35,8 @@ compile_dylib "" "$SRC/libmid.c" "$OUT/thin/libmid.dylib" "@rpath/libmid.dylib" 
   -L "$OUT/thin" -lleaf -Wl,-rpath,@loader_path
 compile_exe "" "$SRC/hello_host.c" "$OUT/thin/hello_host" \
   -L "$OUT/thin" -lmid -Wl,-rpath,@executable_path
+compile_exe "" "$SRC/linger_host.c" "$OUT/thin/linger_host" \
+  -L "$OUT/thin" -lmid -Wl,-rpath,@executable_path
 
 # --- fat (arm64 + x86_64), if the toolchain can emit both ---
 FAT="-arch arm64 -arch x86_64"

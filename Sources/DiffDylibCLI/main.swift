@@ -2,7 +2,8 @@ import Foundation
 import DiffDylibCore
 
 /// DiffDylib CLI.
-/// Static enumerate / capture / show / compare. No libproc, no Endpoint Security.
+/// Static enumerate / capture / show / compare, plus runtime `ps` via proc_pidinfo.
+/// No task_for_pid, no remote memory reads, no Endpoint Security.
 
 enum CLIExit {
     static let findings = 1
@@ -29,6 +30,9 @@ struct DiffDylibCLI {
             fputs("error: \(error.description)\n", stderr)
             Foundation.exit(Int32(CLIExit.failure))
         } catch let error as BaselineStoreError {
+            fputs("error: \(error.description)\n", stderr)
+            Foundation.exit(Int32(CLIExit.failure))
+        } catch let error as RuntimeEnumerationError {
             fputs("error: \(error.description)\n", stderr)
             Foundation.exit(Int32(CLIExit.failure))
         } catch {
@@ -60,6 +64,10 @@ struct DiffDylibCLI {
             let options = try parseShow(Array(arguments.dropFirst()))
             guard let options else { return }
             try runShow(options)
+        case "ps":
+            let options = try parsePS(Array(arguments.dropFirst()))
+            guard let options else { return }
+            try runPS(options)
         case "-h", "--help", "help":
             printUsage()
         default:
@@ -237,7 +245,8 @@ struct DiffDylibCLI {
 
     private struct CompareOptions {
         var baseline: String
-        var app: String
+        var app: String?
+        var pid: pid_t?
         var jsonOnly: Bool
         var depth: Int
         var skipSystem: Bool
@@ -247,6 +256,7 @@ struct DiffDylibCLI {
     private static func parseCompare(_ args: [String]) throws -> CompareOptions? {
         var baseline: String?
         var app: String?
+        var pid: pid_t?
         var jsonOnly = false
         var depth = 1
         var skipSystem = true
@@ -257,6 +267,12 @@ struct DiffDylibCLI {
                 baseline = try requireValue("--baseline", args: args, index: &i)
             case "--app":
                 app = try requireValue("--app", args: args, index: &i)
+            case "--pid":
+                let raw = try requireValue("--pid", args: args, index: &i)
+                guard let value = Int32(raw), value > 0 else {
+                    throw CLIError(message: "--pid must be a positive integer", exitCode: CLIExit.usage)
+                }
+                pid = value
             case "--json":
                 jsonOnly = true
             case "--depth":
@@ -283,16 +299,24 @@ struct DiffDylibCLI {
             }
             i += 1
         }
-        guard let baseline, let app else {
+        guard let baseline else {
             printCompareUsage()
             throw CLIError(
-                message: "compare requires --baseline <file> and --app <path>",
+                message: "compare requires --baseline <file> and --app <path> or --pid <pid>",
+                exitCode: CLIExit.usage
+            )
+        }
+        if (app != nil) == (pid != nil) {
+            printCompareUsage()
+            throw CLIError(
+                message: "compare requires exactly one of --app or --pid",
                 exitCode: CLIExit.usage
             )
         }
         return CompareOptions(
             baseline: baseline,
             app: app,
+            pid: pid,
             jsonOnly: jsonOnly,
             depth: depth,
             skipSystem: skipSystem
@@ -303,12 +327,26 @@ struct DiffDylibCLI {
         let baseline = try BaselineCapture.loadJSON(
             from: URL(fileURLWithPath: BaselineCapture.expandPath(options.baseline))
         )
-        let report = try DifferentialComparator.compare(
-            baseline: baseline,
-            appURL: URL(fileURLWithPath: options.app),
-            depth: options.depth,
-            skipSystem: options.skipSystem
-        )
+        let report: DiffReport
+        if let pid = options.pid {
+            report = try DifferentialComparator.compare(
+                baseline: baseline,
+                pid: pid,
+                skipSystem: options.skipSystem
+            )
+        } else if let app = options.app {
+            report = try DifferentialComparator.compare(
+                baseline: baseline,
+                appURL: URL(fileURLWithPath: app),
+                depth: options.depth,
+                skipSystem: options.skipSystem
+            )
+        } else {
+            throw CLIError(
+                message: "compare requires --app or --pid",
+                exitCode: CLIExit.usage
+            )
+        }
         let json = try DiffDylibJSON.encode(report)
         if !options.jsonOnly {
             fputs(DifferentialComparator.formatHuman(report), stdout)
@@ -402,14 +440,17 @@ struct DiffDylibCLI {
                            [--depth 1] [--skip-system|--no-skip-system]
           diffdylib compare --baseline <file> --app <path> [--json]
                            [--depth 1] [--skip-system|--no-skip-system]
+          diffdylib compare --baseline <file> --pid <pid> [--json]
+                           [--skip-system|--no-skip-system]
           diffdylib show --baseline <file> [--json]
+          diffdylib ps --pid <pid> [--json]
 
         enumerate walks LC_LOAD_DYLIB / LC_RPATH (static only).
         capture writes baseline.v1 JSON and optional SQLite revisions.
-        compare diffs baseline vs a fresh static walk (not runtime).
+        compare diffs baseline vs a static walk (--app) or runtime mappings (--pid).
         Exit 0 = no medium/high findings; 1 = medium/high; 2 = usage.
-        show prints a human dump and JSON.
-        No libproc. No Endpoint Security.
+        ps lists file-backed executable mappings via proc_pidinfo.
+        No task_for_pid. No remote memory reads. No Endpoint Security.
 
         """
         fputs(text, stdout)
@@ -439,11 +480,78 @@ struct DiffDylibCLI {
             """
             usage: diffdylib compare --baseline <file> --app <path> [--json]
                                  [--depth 1] [--skip-system|--no-skip-system]
+                   diffdylib compare --baseline <file> --pid <pid> [--json]
+                                 [--skip-system|--no-skip-system]
             exit 0 = no medium/high findings; 1 = medium/high; 2 = usage
 
             """,
             stdout
         )
+    }
+
+    private struct PSOptions {
+        var pid: pid_t
+        var jsonOnly: Bool
+    }
+
+    private static func parsePS(_ args: [String]) throws -> PSOptions? {
+        var pid: pid_t?
+        var jsonOnly = false
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--pid":
+                let raw = try requireValue("--pid", args: args, index: &i)
+                guard let value = Int32(raw), value > 0 else {
+                    throw CLIError(message: "--pid must be a positive integer", exitCode: CLIExit.usage)
+                }
+                pid = value
+            case "--json":
+                jsonOnly = true
+            case "-h", "--help":
+                printPSUsage()
+                return nil
+            default:
+                throw CLIError(
+                    message: "unknown option '\(args[i])' for ps",
+                    exitCode: CLIExit.usage
+                )
+            }
+            i += 1
+        }
+        guard let pid else {
+            printPSUsage()
+            throw CLIError(message: "ps requires --pid <pid>", exitCode: CLIExit.usage)
+        }
+        return PSOptions(pid: pid, jsonOnly: jsonOnly)
+    }
+
+    private static func runPS(_ options: PSOptions) throws {
+        let path = try RuntimeEnumerator.processPath(pid: options.pid)
+        let dylibs = try RuntimeEnumerator.listExecutableMappings(pid: options.pid)
+        let snapshot = RuntimeProcessSnapshot(
+            pid: options.pid,
+            processPath: path.path,
+            dylibs: dylibs
+        )
+        let json = try DiffDylibJSON.encode(snapshot)
+        if !options.jsonOnly {
+            fputs("pid \(options.pid)\n", stdout)
+            fputs("path \(path.path)\n", stdout)
+            fputs("executable mappings: \(dylibs.count)\n", stdout)
+            for dylib in dylibs {
+                fputs("  \(dylib.resolvedPath ?? dylib.path)\n", stdout)
+            }
+            fputs("--- json ---\n", stdout)
+        }
+        FileHandle.standardOutput.write(json)
+        if json.last != UInt8(ascii: "\n") {
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
+    }
+
+    private static func printPSUsage() {
+        fputs("usage: diffdylib ps --pid <pid> [--json]\n", stdout)
     }
 
     private static func printShowUsage() {
