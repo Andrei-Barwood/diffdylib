@@ -55,6 +55,22 @@
       "type": "string",
       "enum": ["staticDependency", "rpathCandidate", "runtimeMapping"]
     },
+    "sipState": {
+      "type": "string",
+      "enum": ["protected", "unprotected", "unknown"]
+    },
+    "signingState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["unsigned", "valid", "invalid", "error"]
+        },
+        "message": { "type": "string" }
+      }
+    },
     "dylibIdentity": {
       "type": "object",
       "additionalProperties": false,
@@ -80,11 +96,34 @@
         "signing_id": {
           "type": ["string", "null"]
         },
+        "authority": {
+          "type": ["string", "null"],
+          "description": "Leaf certificate subject summary. Not a malware label."
+        },
+        "notarized": {
+          "type": ["boolean", "null"],
+          "description": "Offline/stapled evidence only. null = not determined (no network)."
+        },
+        "signing_state": {
+          "description": "unsigned is a nameplate, not malware.",
+          "anyOf": [
+            { "$ref": "#/$defs/signingState" },
+            { "type": "null" }
+          ]
+        },
         "posix_permissions": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 65535,
           "description": "st_mode bits as UInt16."
+        },
+        "uid": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "gid": {
+          "type": ["integer", "null"],
+          "minimum": 0
         },
         "owner": {
           "type": ["string", "null"],
@@ -93,6 +132,13 @@
         "writable_by_user": {
           "type": "boolean",
           "description": "Effective user can write the file or its parent directory."
+        },
+        "sip": {
+          "description": "Approximation from UF_RESTRICTED/SF_RESTRICTED. unknown if lstat failed.",
+          "anyOf": [
+            { "$ref": "#/$defs/sipState" },
+            { "type": "null" }
+          ]
         },
         "origin": { "$ref": "#/$defs/dylibOrigin" }
       }

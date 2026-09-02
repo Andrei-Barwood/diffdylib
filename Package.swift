@@ -12,7 +12,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "DiffDylibCore"
+            name: "DiffDylibCore",
+            linkerSettings: [
+                .linkedFramework("Security"),
+            ]
         ),
         .executableTarget(
             name: "DiffDylibCLI",

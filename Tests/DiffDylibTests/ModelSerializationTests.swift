@@ -10,9 +10,15 @@ final class ModelSerializationTests: XCTestCase {
             sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             teamID: nil,
             signingID: nil,
+            authority: nil,
+            notarized: false,
+            signingState: .unsigned,
             posixPermissions: 0o100644,
+            uid: 501,
+            gid: 20,
             owner: "tester:staff",
             writableByUser: true,
+            sip: .unprotected,
             origin: .rpathCandidate
         )
 
@@ -26,6 +32,16 @@ final class ModelSerializationTests: XCTestCase {
         XCTAssertEqual(object?["team_id"] as? String, nil)
         XCTAssertEqual(object?["writable_by_user"] as? Bool, true)
         XCTAssertEqual(object?["origin"] as? String, "rpathCandidate")
+        XCTAssertEqual(object?["sip"] as? String, "unprotected")
+        let state = object?["signing_state"] as? [String: Any]
+        XCTAssertEqual(state?["kind"] as? String, "unsigned")
+    }
+
+    func testSigningStateErrorRoundTrip() throws {
+        let state = SigningState.error("SecStaticCodeCreateWithPath failed")
+        let data = try DiffDylibJSON.encode(state)
+        let decoded = try DiffDylibJSON.decode(SigningState.self, from: data)
+        XCTAssertEqual(decoded, state)
     }
 
     func testAppBaselineRoundTrip() throws {

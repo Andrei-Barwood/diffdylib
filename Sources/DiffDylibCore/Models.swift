@@ -45,11 +45,70 @@ public enum DiffFindingKind: String, Codable, Equatable, Sendable {
     case rpathAmbiguous
 }
 
+/// Result of `SecStaticCodeCheckValidity`. `unsigned` is a nameplate, not malware.
+public enum SigningState: Equatable, Sendable {
+    case unsigned
+    case valid
+    case invalid
+    case error(String)
+}
+
+extension SigningState: Codable {
+    enum Kind: String, Codable {
+        case unsigned
+        case valid
+        case invalid
+        case error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case message
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .unsigned:
+            try container.encode(Kind.unsigned, forKey: .kind)
+        case .valid:
+            try container.encode(Kind.valid, forKey: .kind)
+        case .invalid:
+            try container.encode(Kind.invalid, forKey: .kind)
+        case .error(let message):
+            try container.encode(Kind.error, forKey: .kind)
+            try container.encode(message, forKey: .message)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .unsigned:
+            self = .unsigned
+        case .valid:
+            self = .valid
+        case .invalid:
+            self = .invalid
+        case .error:
+            self = .error(try container.decodeIfPresent(String.self, forKey: .message) ?? "unknown")
+        }
+    }
+}
+
+/// Approximation of System Integrity Protection on the on-disk file.
+/// Derived from `st_flags` (`UF_RESTRICTED` / `SF_RESTRICTED`) only — no private API.
+/// `unknown` means `lstat` failed or flags were not readable.
+public enum SIPState: String, Codable, Equatable, Sendable {
+    case protected
+    case unprotected
+    case unknown
+}
+
 /// Identity of one dynamic library as far as DiffDylib is concerned.
 ///
 /// This is a *nameplate*, not a verdict: path, hash, Team ID, POSIX
-/// metadata. Fields stay optional until a later prompt fills them in
-/// (hashing, code signing, Mach-O resolution).
+/// metadata. `unsigned` / `writableByUser` never mean "malware".
 public struct DylibIdentity: Codable, Equatable, Sendable {
     /// Install name or observed path (may still contain `@rpath`).
     public var path: String
@@ -61,12 +120,25 @@ public struct DylibIdentity: Codable, Equatable, Sendable {
     public var teamID: String?
     /// Code-signing identifier, if present.
     public var signingID: String?
+    /// Leaf certificate subject summary (`Authority=` in `codesign -dvv`).
+    public var authority: String?
+    /// Stapled/offline notarization evidence, if a cheap key is present.
+    /// `nil` means "not determined" (we do not hit the network).
+    public var notarized: Bool?
+    /// Outcome of Security.framework inspection. `nil` if the file was not read.
+    public var signingState: SigningState?
     /// `st_mode` bits (e.g. `0o100755`).
     public var posixPermissions: UInt16?
-    /// File owner as `user:group` or username, if known.
+    /// File owner uid from `lstat`.
+    public var uid: UInt32?
+    /// File owner gid from `lstat`.
+    public var gid: UInt32?
+    /// File owner as `user:group`, if names resolved.
     public var owner: String?
     /// True when the effective user can write the file or its parent directory.
     public var writableByUser: Bool
+    /// Restricted-flag approximation of SIP. `unknown` if flags were not readable.
+    public var sip: SIPState?
     /// Which enumeration layer produced this identity.
     public var origin: DylibOrigin
 
@@ -76,9 +148,15 @@ public struct DylibIdentity: Codable, Equatable, Sendable {
         sha256: String? = nil,
         teamID: String? = nil,
         signingID: String? = nil,
+        authority: String? = nil,
+        notarized: Bool? = nil,
+        signingState: SigningState? = nil,
         posixPermissions: UInt16? = nil,
+        uid: UInt32? = nil,
+        gid: UInt32? = nil,
         owner: String? = nil,
         writableByUser: Bool = false,
+        sip: SIPState? = nil,
         origin: DylibOrigin
     ) {
         self.path = path
@@ -86,9 +164,15 @@ public struct DylibIdentity: Codable, Equatable, Sendable {
         self.sha256 = sha256
         self.teamID = teamID
         self.signingID = signingID
+        self.authority = authority
+        self.notarized = notarized
+        self.signingState = signingState
         self.posixPermissions = posixPermissions
+        self.uid = uid
+        self.gid = gid
         self.owner = owner
         self.writableByUser = writableByUser
+        self.sip = sip
         self.origin = origin
     }
 
@@ -98,9 +182,15 @@ public struct DylibIdentity: Codable, Equatable, Sendable {
         case sha256
         case teamID = "team_id"
         case signingID = "signing_id"
+        case authority
+        case notarized
+        case signingState = "signing_state"
         case posixPermissions = "posix_permissions"
+        case uid
+        case gid
         case owner
         case writableByUser = "writable_by_user"
+        case sip
         case origin
     }
 }

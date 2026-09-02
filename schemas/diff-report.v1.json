@@ -45,6 +45,22 @@
       "type": "string",
       "enum": ["staticDependency", "rpathCandidate", "runtimeMapping"]
     },
+    "sipState": {
+      "type": "string",
+      "enum": ["protected", "unprotected", "unknown"]
+    },
+    "signingState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["unsigned", "valid", "invalid", "error"]
+        },
+        "message": { "type": "string" }
+      }
+    },
     "dylibIdentity": {
       "type": "object",
       "additionalProperties": false,
@@ -58,13 +74,29 @@
         },
         "team_id": { "type": ["string", "null"] },
         "signing_id": { "type": ["string", "null"] },
+        "authority": { "type": ["string", "null"] },
+        "notarized": { "type": ["boolean", "null"] },
+        "signing_state": {
+          "anyOf": [
+            { "$ref": "#/$defs/signingState" },
+            { "type": "null" }
+          ]
+        },
         "posix_permissions": {
           "type": ["integer", "null"],
           "minimum": 0,
           "maximum": 65535
         },
+        "uid": { "type": ["integer", "null"], "minimum": 0 },
+        "gid": { "type": ["integer", "null"], "minimum": 0 },
         "owner": { "type": ["string", "null"] },
         "writable_by_user": { "type": "boolean" },
+        "sip": {
+          "anyOf": [
+            { "$ref": "#/$defs/sipState" },
+            { "type": "null" }
+          ]
+        },
         "origin": { "$ref": "#/$defs/dylibOrigin" }
       }
     },

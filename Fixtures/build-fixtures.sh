@@ -8,7 +8,7 @@ OUT="$ROOT/build"
 CLANG="${CLANG:-clang}"
 
 rm -rf "$OUT"
-mkdir -p "$OUT/thin" "$OUT/fat" "$OUT/rpath/r1" "$OUT/rpath/r2"
+mkdir -p "$OUT/thin" "$OUT/fat" "$OUT/rpath/r1" "$OUT/rpath/r2" "$OUT/unsigned"
 
 compile_dylib() {
   arch_flags=$1
@@ -63,5 +63,11 @@ compile_exe "" "$SRC/rpath_host.c" "$OUT/rpath/host" \
 
 # --- system dylib only (libz) ---
 compile_exe "" "$SRC/libz_host.c" "$OUT/libz_host" -lz
+
+# --- unsigned (strip clang's default ad-hoc signature) ---
+compile_dylib "" "$SRC/libleaf.c" "$OUT/unsigned/libunsigned.dylib" "@rpath/libunsigned.dylib"
+if ! codesign --remove-signature "$OUT/unsigned/libunsigned.dylib" >/dev/null 2>&1; then
+  echo "warning: codesign --remove-signature failed; unsigned fixture may still be ad-hoc" >&2
+fi
 
 echo "fixtures ready under $OUT"

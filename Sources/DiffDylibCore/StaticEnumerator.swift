@@ -44,7 +44,8 @@ public struct StaticEnumerationResult: Codable, Equatable, Sendable {
 /// Static (on-disk) enumeration of dylib dependencies.
 ///
 /// Walks `LC_LOAD_DYLIB` / `LC_LOAD_WEAK_DYLIB` / `LC_RPATH` / `LC_ID_DYLIB`.
-/// Does not inspect process memory, Endpoint Security, or code signatures.
+/// Enriches each resolved path with hash / POSIX / Security.framework.
+/// Does not inspect process memory or Endpoint Security.
 public enum StaticEnumerator {
     public static let maxDepth = 3
 
@@ -249,27 +250,17 @@ public enum StaticEnumerator {
         resolvedPath: String?,
         origin: DylibOrigin
     ) -> DylibIdentity {
-        let writable: Bool
-        if let resolvedPath {
-            writable = isWritableByUser(resolvedPath)
-        } else {
-            writable = false
-        }
-        return DylibIdentity(
-            path: installName,
-            resolvedPath: resolvedPath,
-            writableByUser: writable,
-            origin: origin
+        FileIdentityInspector.enrich(
+            DylibIdentity(
+                path: installName,
+                resolvedPath: resolvedPath,
+                origin: origin
+            )
         )
     }
 
-    /// Conservative writability: the file or its parent directory.
-    /// Full POSIX/owner fields are prompt 01.3.
     static func isWritableByUser(_ path: String) -> Bool {
-        let fm = FileManager.default
-        if fm.isWritableFile(atPath: path) { return true }
-        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
-        return fm.isWritableFile(atPath: parent)
+        FileIdentityInspector.isWritableByUser(path)
     }
 
     // MARK: - Path tokens

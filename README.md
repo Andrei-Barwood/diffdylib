@@ -44,7 +44,7 @@ Patrick Wardle, *Detecting (Evil) Dylibs* (Objective-See, agosto 2026) y DEF CON
 
 Las APIs de seguridad de macOS (Network Extension, Endpoint Security, firewalls como LuLu) atribuyen eventos al **proceso**, no a la dylib que inició la acción. DiffDylib aumenta la granularidad de la instrumentación; no reescribe el kernel.
 
-## Estado (01.2)
+## Estado (01.3)
 
 Implementado:
 
@@ -58,14 +58,23 @@ Implementado:
 - `--depth` 1 (default) … 3. El primer nivel siempre; la recursión es opcional.
 - Errores tipados: `notMachO`, `truncated`, `permissionDenied`.
 - Fixtures de laboratorio en `Fixtures/src` (host propio, no `/Applications`).
+- `FileIdentityInspector` (Security.framework + CryptoKit + `lstat`):
+  - SHA-256 del archivo en disco
+  - Team ID, signing ID, authority (certificado hoja)
+  - `notarized` solo con evidencia *offline* (`notarization-date`); `null` = no determinado, **sin red**
+  - `signingState`: `unsigned` | `valid` | `invalid` | `error(message)` — un fallo de codesign **no aborta**
+  - `uid` / `gid` / `posix_permissions` (mode) / `owner` (`user:group`)
+  - `writableByUser`: el uid efectivo puede escribir el archivo **o** su directorio padre (`access(W_OK)`)
+  - `sip`: `protected` | `unprotected` | `unknown` aproximado con `st_flags` (`UF_RESTRICTED` / `SF_RESTRICTED`). Sin API privada de rootless. Los stubs del dyld shared cache pueden no llevar el flag aunque el sistema esté protegido por SIP.
 
 No implementado (a propósito):
 
-- Hash SHA-256, Team ID, permisos POSIX completos (prompt 01.3).
 - Persistencia SQLite / `capture` de verdad.
 - Comparador diferencial (`compare`).
 - Enumeración runtime (`proc_pidinfo`).
 - Endpoint Security.
+
+`unsigned` no es malware. `writableByUser` no es compromiso.
 
 ## Uso
 
@@ -98,9 +107,13 @@ Los documentos usan snake_case y fechas RFC 3339 con fracción, alineados al con
 
 SQLite queda reservado para un prompt posterior. No hay protobuf.
 
-## Siguiente prompt (01.3)
+## SIP (`unknown` a propósito)
 
-Identidad criptográfica y POSIX de cada `DylibIdentity`: SHA-256, Team ID, signing ID, `uid/gid`/`mode`, `writableByUser` de verdad, y una aproximación a SIP. Sin `compare` todavía. `unsigned` no es malware.
+No hay API pública de “¿este path está cubierto por SIP?”. DiffDylib no llama interfaces privadas. Si `lstat` funciona y el bit restricted no está, el valor es `unprotected` aunque el path viva bajo `/usr/lib`. Eso es una limitación documentada, no un bug a “resolver con magia”.
+
+## Siguiente prompt (01.4)
+
+Baseline store: `diffdylib capture` persiste JSON (`baseline.v1`) y SQLite opcional. `show` imprime el baseline. Sin `compare` todavía.
 
 ## Licencia
 
