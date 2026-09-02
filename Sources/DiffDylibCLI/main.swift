@@ -1,0 +1,280 @@
+import Foundation
+import DiffDylibCore
+
+/// DiffDylib CLI.
+/// `enumerate` walks Mach-O load commands. `capture` / `compare` / `show`
+/// remain stubs. No libproc, no Endpoint Security.
+
+enum CLIExit {
+    static let failure = 1
+    static let notImplemented = 2
+    static let usage = 2
+}
+
+struct CLIError: Error, CustomStringConvertible {
+    let message: String
+    let exitCode: Int
+
+    var description: String { message }
+}
+
+@main
+struct DiffDylibCLI {
+    static func main() {
+        do {
+            try run(arguments: Array(CommandLine.arguments.dropFirst()))
+        } catch let error as CLIError {
+            fputs("error: \(error.message)\n", stderr)
+            Foundation.exit(Int32(error.exitCode))
+        } catch let error as StaticEnumerationError {
+            fputs("error: \(error.description)\n", stderr)
+            Foundation.exit(Int32(CLIExit.failure))
+        } catch {
+            fputs("error: \(error)\n", stderr)
+            Foundation.exit(Int32(CLIExit.failure))
+        }
+    }
+
+    static func run(arguments: [String]) throws {
+        guard let command = arguments.first else {
+            printUsage()
+            throw CLIError(message: "missing command", exitCode: CLIExit.usage)
+        }
+
+        switch command {
+        case "enumerate":
+            let options = try parseEnumerate(Array(arguments.dropFirst()))
+            guard let options else { return }
+            try runEnumerate(options)
+        case "capture":
+            guard try parseCapture(Array(arguments.dropFirst())) else { return }
+            notImplemented("capture")
+        case "compare":
+            guard try parseCompare(Array(arguments.dropFirst())) else { return }
+            notImplemented("compare")
+        case "show":
+            guard try parseShow(Array(arguments.dropFirst())) else { return }
+            notImplemented("show")
+        case "-h", "--help", "help":
+            printUsage()
+        default:
+            printUsage()
+            throw CLIError(
+                message: "unknown command '\(command)'",
+                exitCode: CLIExit.usage
+            )
+        }
+    }
+
+    private static func notImplemented(_ command: String) -> Never {
+        fputs("not implemented: \(command)\n", stderr)
+        Foundation.exit(Int32(CLIExit.notImplemented))
+    }
+
+    private struct EnumerateOptions {
+        var app: String
+        var depth: Int
+        var skipSystem: Bool
+    }
+
+    /// Returns `nil` when help was printed.
+    private static func parseEnumerate(_ args: [String]) throws -> EnumerateOptions? {
+        var app: String?
+        var depth = 1
+        var skipSystem = true
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--app":
+                app = try requireValue("--app", args: args, index: &i)
+            case "--depth":
+                let raw = try requireValue("--depth", args: args, index: &i)
+                guard let value = Int(raw), value >= 1, value <= StaticEnumerator.maxDepth else {
+                    throw CLIError(
+                        message: "--depth must be an integer 1...\(StaticEnumerator.maxDepth)",
+                        exitCode: CLIExit.usage
+                    )
+                }
+                depth = value
+            case "--skip-system":
+                skipSystem = true
+            case "--no-skip-system":
+                skipSystem = false
+            case "-h", "--help":
+                printEnumerateUsage()
+                return nil
+            default:
+                throw CLIError(
+                    message: "unknown option '\(args[i])' for enumerate",
+                    exitCode: CLIExit.usage
+                )
+            }
+            i += 1
+        }
+        guard let app else {
+            printEnumerateUsage()
+            throw CLIError(
+                message: "enumerate requires --app <path>",
+                exitCode: CLIExit.usage
+            )
+        }
+        return EnumerateOptions(app: app, depth: depth, skipSystem: skipSystem)
+    }
+
+    private static func runEnumerate(_ options: EnumerateOptions) throws {
+        let url = URL(fileURLWithPath: options.app)
+        let result = try StaticEnumerator.enumerateDetailed(
+            appURL: url,
+            depth: options.depth,
+            skipSystem: options.skipSystem
+        )
+        let data = try DiffDylibJSON.encode(result)
+        FileHandle.standardOutput.write(data)
+        if data.last != UInt8(ascii: "\n") {
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
+    }
+
+    /// Returns `false` when help was printed and the process should exit 0.
+    private static func parseCapture(_ args: [String]) throws -> Bool {
+        var app: String?
+        var out: String?
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--app":
+                app = try requireValue("--app", args: args, index: &i)
+            case "--out":
+                out = try requireValue("--out", args: args, index: &i)
+            case "-h", "--help":
+                printCaptureUsage()
+                return false
+            default:
+                throw CLIError(
+                    message: "unknown option '\(args[i])' for capture",
+                    exitCode: CLIExit.usage
+                )
+            }
+            i += 1
+        }
+        guard app != nil, out != nil else {
+            printCaptureUsage()
+            throw CLIError(
+                message: "capture requires --app <path> and --out <file>",
+                exitCode: CLIExit.usage
+            )
+        }
+        return true
+    }
+
+    /// Returns `false` when help was printed and the process should exit 0.
+    private static func parseCompare(_ args: [String]) throws -> Bool {
+        var baseline: String?
+        var app: String?
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--baseline":
+                baseline = try requireValue("--baseline", args: args, index: &i)
+            case "--app":
+                app = try requireValue("--app", args: args, index: &i)
+            case "-h", "--help":
+                printCompareUsage()
+                return false
+            default:
+                throw CLIError(
+                    message: "unknown option '\(args[i])' for compare",
+                    exitCode: CLIExit.usage
+                )
+            }
+            i += 1
+        }
+        guard baseline != nil, app != nil else {
+            printCompareUsage()
+            throw CLIError(
+                message: "compare requires --baseline <file> and --app <path>",
+                exitCode: CLIExit.usage
+            )
+        }
+        return true
+    }
+
+    /// Returns `false` when help was printed and the process should exit 0.
+    private static func parseShow(_ args: [String]) throws -> Bool {
+        var baseline: String?
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--baseline":
+                baseline = try requireValue("--baseline", args: args, index: &i)
+            case "-h", "--help":
+                printShowUsage()
+                return false
+            default:
+                throw CLIError(
+                    message: "unknown option '\(args[i])' for show",
+                    exitCode: CLIExit.usage
+                )
+            }
+            i += 1
+        }
+        guard baseline != nil else {
+            printShowUsage()
+            throw CLIError(
+                message: "show requires --baseline <file>",
+                exitCode: CLIExit.usage
+            )
+        }
+        return true
+    }
+
+    private static func requireValue(
+        _ flag: String,
+        args: [String],
+        index i: inout Int
+    ) throws -> String {
+        let next = i + 1
+        guard next < args.count else {
+            throw CLIError(message: "\(flag) requires a value", exitCode: CLIExit.usage)
+        }
+        i = next
+        return args[i]
+    }
+
+    private static func printUsage() {
+        let text = """
+        diffdylib — Differential Dylib Protection (Dyld87 module)
+
+        Usage:
+          diffdylib enumerate --app <path> [--depth 1] [--skip-system|--no-skip-system]
+          diffdylib capture --app <path> --out <file>
+          diffdylib compare --baseline <file> --app <path>
+          diffdylib show --baseline <file>
+
+        enumerate walks LC_LOAD_DYLIB / LC_RPATH (static only).
+        capture / compare / show are not implemented yet.
+        No libproc. No Endpoint Security.
+
+        """
+        fputs(text, stdout)
+    }
+
+    private static func printEnumerateUsage() {
+        fputs(
+            "usage: diffdylib enumerate --app <path> [--depth 1] [--skip-system|--no-skip-system]\n",
+            stdout
+        )
+    }
+
+    private static func printCaptureUsage() {
+        fputs("usage: diffdylib capture --app <path> --out <file>\n", stdout)
+    }
+
+    private static func printCompareUsage() {
+        fputs("usage: diffdylib compare --baseline <file> --app <path>\n", stdout)
+    }
+
+    private static func printShowUsage() {
+        fputs("usage: diffdylib show --baseline <file>\n", stdout)
+    }
+}

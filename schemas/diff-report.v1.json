@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dyld87.local/schemas/diff-report.v1.json",
+  "title": "dyld87.diff-report.v1",
+  "description": "Differential comparison of expected vs observed dylib state. Findings are anomalies, not malware detections.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "app", "baseline_id", "findings", "summary"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "dyld87.diff-report.v1"
+    },
+    "app": { "$ref": "#/$defs/appRef" },
+    "baseline_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Matches AppBaseline.id of the expected state."
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "summary": { "$ref": "#/$defs/summary" }
+  },
+  "$defs": {
+    "scoreHint": {
+      "type": "string",
+      "enum": ["info", "low", "medium", "high"],
+      "description": "Severity hint only. Never a malware classification."
+    },
+    "findingKind": {
+      "type": "string",
+      "enum": [
+        "added",
+        "removed",
+        "hashChanged",
+        "teamChanged",
+        "pathChanged",
+        "writableUnexpected",
+        "rpathAmbiguous"
+      ]
+    },
+    "dylibOrigin": {
+      "type": "string",
+      "enum": ["staticDependency", "rpathCandidate", "runtimeMapping"]
+    },
+    "dylibIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "writable_by_user", "origin"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "resolved_path": { "type": ["string", "null"] },
+        "sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "team_id": { "type": ["string", "null"] },
+        "signing_id": { "type": ["string", "null"] },
+        "posix_permissions": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "owner": { "type": ["string", "null"] },
+        "writable_by_user": { "type": "boolean" },
+        "origin": { "$ref": "#/$defs/dylibOrigin" }
+      }
+    },
+    "appRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "signing_id": { "type": ["string", "null"] },
+        "team_id": { "type": ["string", "null"] }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "score_hint"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/findingKind" },
+        "expected": {
+          "description": "Baseline identity. Null for added libraries.",
+          "anyOf": [
+            { "$ref": "#/$defs/dylibIdentity" },
+            { "type": "null" }
+          ]
+        },
+        "observed": {
+          "description": "Observed identity. Null for removed libraries.",
+          "anyOf": [
+            { "$ref": "#/$defs/dylibIdentity" },
+            { "type": "null" }
+          ]
+        },
+        "score_hint": { "$ref": "#/$defs/scoreHint" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_count",
+        "observed_count",
+        "added",
+        "removed",
+        "hash_changed",
+        "team_changed",
+        "path_changed",
+        "writable_unexpected"
+      ],
+      "properties": {
+        "expected_count": { "type": "integer", "minimum": 0 },
+        "observed_count": { "type": "integer", "minimum": 0 },
+        "added": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 },
+        "hash_changed": { "type": "integer", "minimum": 0 },
+        "team_changed": { "type": "integer", "minimum": 0 },
+        "path_changed": { "type": "integer", "minimum": 0 },
+        "writable_unexpected": { "type": "integer", "minimum": 0 },
+        "highest_score_hint": {
+          "anyOf": [
+            { "$ref": "#/$defs/scoreHint" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

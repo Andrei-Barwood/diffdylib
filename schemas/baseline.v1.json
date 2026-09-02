@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dyld87.local/schemas/baseline.v1.json",
+  "title": "dyld87.baseline.v1",
+  "description": "Expected dylib set for one application capture. Differential protection baseline, not a malware verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "app_path",
+    "captured_at",
+    "dylibs",
+    "notes"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "dyld87.baseline.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier referenced by diff reports as baseline_id."
+    },
+    "app_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path of the host application or main executable."
+    },
+    "signing_id": {
+      "type": ["string", "null"],
+      "description": "Host code-signing identifier, if known."
+    },
+    "team_id": {
+      "type": ["string", "null"],
+      "description": "Host Team ID (nameplate). Never treated as a malware label."
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp with optional fractional seconds."
+    },
+    "dylibs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/dylibIdentity" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "dylibOrigin": {
+      "type": "string",
+      "enum": ["staticDependency", "rpathCandidate", "runtimeMapping"]
+    },
+    "dylibIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "writable_by_user", "origin"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Install name or observed path (may contain @rpath)."
+        },
+        "resolved_path": {
+          "type": ["string", "null"],
+          "description": "Absolute path after conservative resolution."
+        },
+        "sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-fA-F]{64}$",
+          "description": "Hex SHA-256 of the on-disk file, if hashed."
+        },
+        "team_id": {
+          "type": ["string", "null"]
+        },
+        "signing_id": {
+          "type": ["string", "null"]
+        },
+        "posix_permissions": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "st_mode bits as UInt16."
+        },
+        "owner": {
+          "type": ["string", "null"],
+          "description": "File owner as user:group or username."
+        },
+        "writable_by_user": {
+          "type": "boolean",
+          "description": "Effective user can write the file or its parent directory."
+        },
+        "origin": { "$ref": "#/$defs/dylibOrigin" }
+      }
+    }
+  }
+}
