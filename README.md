@@ -73,9 +73,16 @@ Implementado:
 - Misma clave → nueva **revisión**. `--replace` sobreescribe la revisión más reciente.
 - `diffdylib show --baseline <file>`: volcado humano y JSON (`--json` solo JSON).
 
+- Comparador diferencial: baseline vs **otra enumeración estática** del mismo binario.
+- Findings, en orden: `added`, `removed`, `hashChanged`, `teamChanged`, `writableUnexpected`, `rpathAmbiguous`.
+- Scoring (hint, no veredicto): `writableUnexpected+teamChanged` = high; `writableUnexpected` = medium; added de sistema = low; `removed` = info.
+- `diffdylib compare --baseline <file> --app <path> [--json]`
+  - exit 0 = sin medium/high
+  - exit 1 = medium/high
+  - exit 2 = error de uso
+
 No implementado (a propósito):
 
-- Comparador diferencial (`compare`).
 - Enumeración runtime (`proc_pidinfo`).
 - Endpoint Security.
 
@@ -88,10 +95,13 @@ diffdylib enumerate --app <path> [--depth 1] [--skip-system|--no-skip-system]
 diffdylib capture --app <path> --out <file> [--store [file]] [--replace]
                  [--depth 1] [--skip-system|--no-skip-system]
 diffdylib show --baseline <file> [--json]
-diffdylib compare --baseline <file> --app <path>
+diffdylib compare --baseline <file> --app <path> [--json]
+                 [--depth 1] [--skip-system|--no-skip-system]
 ```
 
-`enumerate` imprime JSON (`dyld87.static-enum.v1`). `capture` escribe el baseline y, si hay `--store`, una fila SQLite. `show` imprime texto humano y JSON. `compare` sigue saliendo 2 (`not implemented`).
+`enumerate` imprime JSON (`dyld87.static-enum.v1`). `capture` escribe el baseline. `compare` contrasta esperado vs observado (estático). `show` imprime texto humano y JSON.
+
+`writableUnexpected` se dispara si hay `added` o `hashChanged`, el archivo es escribible por el usuario, y la ruta cae en `~/Library`, `/tmp` (`/private/tmp`), `/var/tmp`, `/Users`, o el directorio del propio host.
 
 `--store` sin ruta usa `~/.diffdylib/baselines.sqlite`.
 
@@ -119,9 +129,9 @@ SQLite es opcional y solo guarda revisiones de baselines. No hay protobuf.
 
 No hay API pública de “¿este path está cubierto por SIP?”. DiffDylib no llama interfaces privadas. Si `lstat` funciona y el bit restricted no está, el valor es `unprotected` aunque el path viva bajo `/usr/lib`. Eso es una limitación documentada, no un bug a “resolver con magia”.
 
-## Siguiente prompt (01.5)
+## Siguiente prompt (01.6)
 
-Comparador diferencial: estado esperado vs estado real (por ahora otra enumeración estática). Findings `added` / `removed` / `hashChanged` / `teamChanged` / `writableUnexpected`. CLI `compare`. Sin Endpoint Security.
+Estado real runtime con `proc_pidinfo` + `PROC_PIDREGIONPATHINFO`. `compare --pid`. Detectar dos `libtbb` (hijacker vs Adobe). Sin `task_for_pid`. Documentar dyld shared cache y TOCTOU disco vs memoria.
 
 ## Licencia
 

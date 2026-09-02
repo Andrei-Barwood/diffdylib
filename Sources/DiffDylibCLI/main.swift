@@ -2,12 +2,11 @@ import Foundation
 import DiffDylibCore
 
 /// DiffDylib CLI.
-/// `enumerate` and `capture` / `show` are implemented. `compare` is still a stub.
-/// No libproc, no Endpoint Security.
+/// Static enumerate / capture / show / compare. No libproc, no Endpoint Security.
 
 enum CLIExit {
+    static let findings = 1
     static let failure = 1
-    static let notImplemented = 2
     static let usage = 2
 }
 
@@ -54,8 +53,9 @@ struct DiffDylibCLI {
             guard let options else { return }
             try runCapture(options)
         case "compare":
-            guard try parseCompare(Array(arguments.dropFirst())) else { return }
-            notImplemented("compare")
+            let options = try parseCompare(Array(arguments.dropFirst()))
+            guard let options else { return }
+            try runCompare(options)
         case "show":
             let options = try parseShow(Array(arguments.dropFirst()))
             guard let options else { return }
@@ -69,11 +69,6 @@ struct DiffDylibCLI {
                 exitCode: CLIExit.usage
             )
         }
-    }
-
-    private static func notImplemented(_ command: String) -> Never {
-        fputs("not implemented: \(command)\n", stderr)
-        Foundation.exit(Int32(CLIExit.notImplemented))
     }
 
     private struct EnumerateOptions {
@@ -240,10 +235,21 @@ struct DiffDylibCLI {
         }
     }
 
-    /// Returns `false` when help was printed and the process should exit 0.
-    private static func parseCompare(_ args: [String]) throws -> Bool {
+    private struct CompareOptions {
+        var baseline: String
+        var app: String
+        var jsonOnly: Bool
+        var depth: Int
+        var skipSystem: Bool
+    }
+
+    /// Returns `nil` when help was printed.
+    private static func parseCompare(_ args: [String]) throws -> CompareOptions? {
         var baseline: String?
         var app: String?
+        var jsonOnly = false
+        var depth = 1
+        var skipSystem = true
         var i = 0
         while i < args.count {
             switch args[i] {
@@ -251,9 +257,24 @@ struct DiffDylibCLI {
                 baseline = try requireValue("--baseline", args: args, index: &i)
             case "--app":
                 app = try requireValue("--app", args: args, index: &i)
+            case "--json":
+                jsonOnly = true
+            case "--depth":
+                let raw = try requireValue("--depth", args: args, index: &i)
+                guard let value = Int(raw), value >= 1, value <= StaticEnumerator.maxDepth else {
+                    throw CLIError(
+                        message: "--depth must be an integer 1...\(StaticEnumerator.maxDepth)",
+                        exitCode: CLIExit.usage
+                    )
+                }
+                depth = value
+            case "--skip-system":
+                skipSystem = true
+            case "--no-skip-system":
+                skipSystem = false
             case "-h", "--help":
                 printCompareUsage()
-                return false
+                return nil
             default:
                 throw CLIError(
                     message: "unknown option '\(args[i])' for compare",
@@ -262,14 +283,44 @@ struct DiffDylibCLI {
             }
             i += 1
         }
-        guard baseline != nil, app != nil else {
+        guard let baseline, let app else {
             printCompareUsage()
             throw CLIError(
                 message: "compare requires --baseline <file> and --app <path>",
                 exitCode: CLIExit.usage
             )
         }
-        return true
+        return CompareOptions(
+            baseline: baseline,
+            app: app,
+            jsonOnly: jsonOnly,
+            depth: depth,
+            skipSystem: skipSystem
+        )
+    }
+
+    private static func runCompare(_ options: CompareOptions) throws {
+        let baseline = try BaselineCapture.loadJSON(
+            from: URL(fileURLWithPath: BaselineCapture.expandPath(options.baseline))
+        )
+        let report = try DifferentialComparator.compare(
+            baseline: baseline,
+            appURL: URL(fileURLWithPath: options.app),
+            depth: options.depth,
+            skipSystem: options.skipSystem
+        )
+        let json = try DiffDylibJSON.encode(report)
+        if !options.jsonOnly {
+            fputs(DifferentialComparator.formatHuman(report), stdout)
+            fputs("--- json ---\n", stdout)
+        }
+        FileHandle.standardOutput.write(json)
+        if json.last != UInt8(ascii: "\n") {
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
+        if report.summary.hasMediumOrHigh {
+            Foundation.exit(1)
+        }
     }
 
     private struct ShowOptions {
@@ -349,13 +400,15 @@ struct DiffDylibCLI {
           diffdylib enumerate --app <path> [--depth 1] [--skip-system|--no-skip-system]
           diffdylib capture --app <path> --out <file> [--store [file]] [--replace]
                            [--depth 1] [--skip-system|--no-skip-system]
-          diffdylib compare --baseline <file> --app <path>
+          diffdylib compare --baseline <file> --app <path> [--json]
+                           [--depth 1] [--skip-system|--no-skip-system]
           diffdylib show --baseline <file> [--json]
 
         enumerate walks LC_LOAD_DYLIB / LC_RPATH (static only).
         capture writes baseline.v1 JSON and optional SQLite revisions.
+        compare diffs baseline vs a fresh static walk (not runtime).
+        Exit 0 = no medium/high findings; 1 = medium/high; 2 = usage.
         show prints a human dump and JSON.
-        compare is not implemented yet.
         No libproc. No Endpoint Security.
 
         """
@@ -382,7 +435,15 @@ struct DiffDylibCLI {
     }
 
     private static func printCompareUsage() {
-        fputs("usage: diffdylib compare --baseline <file> --app <path>\n", stdout)
+        fputs(
+            """
+            usage: diffdylib compare --baseline <file> --app <path> [--json]
+                                 [--depth 1] [--skip-system|--no-skip-system]
+            exit 0 = no medium/high findings; 1 = medium/high; 2 = usage
+
+            """,
+            stdout
+        )
     }
 
     private static func printShowUsage() {

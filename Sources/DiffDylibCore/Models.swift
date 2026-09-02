@@ -368,6 +368,7 @@ public struct DiffSummary: Codable, Equatable, Sendable {
     public var teamChanged: Int
     public var pathChanged: Int
     public var writableUnexpected: Int
+    public var rpathAmbiguous: Int
     public var highestScoreHint: ScoreHint?
 
     public init(
@@ -379,6 +380,7 @@ public struct DiffSummary: Codable, Equatable, Sendable {
         teamChanged: Int = 0,
         pathChanged: Int = 0,
         writableUnexpected: Int = 0,
+        rpathAmbiguous: Int = 0,
         highestScoreHint: ScoreHint? = nil
     ) {
         self.expectedCount = expectedCount
@@ -389,7 +391,15 @@ public struct DiffSummary: Codable, Equatable, Sendable {
         self.teamChanged = teamChanged
         self.pathChanged = pathChanged
         self.writableUnexpected = writableUnexpected
+        self.rpathAmbiguous = rpathAmbiguous
         self.highestScoreHint = highestScoreHint
+    }
+
+    public var hasMediumOrHigh: Bool {
+        switch highestScoreHint {
+        case .medium, .high: return true
+        default: return false
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -401,6 +411,7 @@ public struct DiffSummary: Codable, Equatable, Sendable {
         case teamChanged = "team_changed"
         case pathChanged = "path_changed"
         case writableUnexpected = "writable_unexpected"
+        case rpathAmbiguous = "rpath_ambiguous"
         case highestScoreHint = "highest_score_hint"
     }
 }

@@ -155,6 +155,7 @@
         "team_changed": { "type": "integer", "minimum": 0 },
         "path_changed": { "type": "integer", "minimum": 0 },
         "writable_unexpected": { "type": "integer", "minimum": 0 },
+        "rpath_ambiguous": { "type": "integer", "minimum": 0 },
         "highest_score_hint": {
           "anyOf": [
             { "$ref": "#/$defs/scoreHint" },
